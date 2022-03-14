@@ -1,34 +1,34 @@
 FROM condaforge/miniforge3:latest
 MAINTAINER joezuntz@googlemail.com
 
-ARG mpich=3.4.3
-ARG mpich_prefix=mpich-$mpich
+
+# Make, which we will need for everything
+RUN apt-get update -y \
+    && DEBIAN_FRONTEND="noninteractive" apt-get install -y make  \
+    && apt-get clean all
+
+# We need a C compiler temporarily to install MPICH, which we want so that we use
+# vendored MPI with conda. Not sure if we can get away with removing the gcc and g++
+# compilers afterwards to save space but will try. We will use the conda gcc for everything
+# else, though ideally everything would come through conda-forge.
+# I have found that using the conda-forge supplied MPICH does not work.
+RUN apt-get update -y  \
+    && DEBIAN_FRONTEND="noninteractive" apt-get install -y gcc \
+    && mkdir /opt/mpich \
+    && cd /opt/mpich \
+    && wget http://www.mpich.org/static/downloads/3.4.2/mpich-3.4.2.tar.gz \
+    && tar xvzf mpich-3.4.2.tar.gz \
+    && cd mpich-3.4.2 \
+    && ./configure --disable-wrapper-rpath --disable-fortran --disable-cxx --with-device=ch3 && make \
+    && make install \
+    && rm -rf /opt/mpich \
+    && apt-get remove --purge -y gcc
 
 
 # Install everything through conda
-RUN conda install -c conda-forge   -y cosmosis cosmosis-build-standard-library==1.0 mpich=${mpich}=external_* chrpath
+RUN conda install -c conda-forge   -y cosmosis cosmosis-build-standard-library==1.0 'mpich>=3.4.*=external_*' chrpath
 
-# Except for MPI. We need that installed manually for shifter to be able to pick it up
-RUN \
-    wget https://www.mpich.org/static/downloads/${mpich}/${mpich_prefix}.tar.gz && \
-    tar xvzf $mpich_prefix.tar.gz                                           && \
-    cd $mpich_prefix                                                        && \
-    # Something over-zealous in some versions of MPICH means that it breaks if you
-    # have F90 set. This is patched in later versions so we can probably remove later.
-    # We have to run all these inside conda run to get the right compilers etc
-    conda run --no-capture-output bash -c "unset F90 && unset F90FLAGS && ./configure   --disable-wrapper-rpath --disable-cxx --with-device=ch3"  && \
-    conda run --no-capture-output make                                      && \
-    conda run --no-capture-output make install                              && \
-    cd ..                                                                   && \
-    rm -rf $mpich_prefix                                                    && \
-    # This patches up the fact that when we installed MPI4PY the lib wasn't there
-    dirname=$(python -c 'import mpi4py,os;print(os.path.split(mpi4py.__file__)[0])') && \
-    chrpath -r /usr/local/lib/ ${dirname}/MPI.*.so
-
-
-# Needed for mpi4py to pick up the replaced MPI library.
-# Though actually that itself will be replaced by shifter. hmm
-ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV LD_LIBRARY_PATH /usr/local/lib
 
 # Disable the local per-user python directory because
 # it breaks things on NERSC
